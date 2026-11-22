@@ -1,0 +1,64 @@
+# Single stack: everything on one network so containers reach each other by
+# name (postgres:5432) instead of via the host.
+#
+# Host ports are shifted off the defaults because 5432/8080 are already taken
+# on this machine by the pipeline project.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: lf-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: leadflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-leadflow_dev}
+      POSTGRES_DB: leadflow
+    ports:
+      - "127.0.0.1:5434:5432"          # host 5434 -> container 5432
+    volumes:
+      - lf_pgdata:/var/lib/postgresql/data
+      # Files here run once, in filename order, on an EMPTY data directory.
+      # To re-run them: docker compose down -v
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U leadflow -d leadflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment:
+      - GENERIC_TIMEZONE=Asia/Manila
+      - TZ=Asia/Manila
+      - N8N_SECURE_COOKIE=false
+      # Keep this stable. Change it and every saved credential becomes
+      # unreadable.
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-dev-only-change-me}
+      - N8N_DIAGNOSTICS_ENABLED=false
+    volumes:
+      # External volume from the automation-lab stack, so the account and any
+      # saved credentials carry over. Do not rename this.
+      - n8n_n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  adminer:
+    image: adminer:5
+    container_name: lf-adminer
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8081:8080"          # 8080 is taken by Airflow
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+
+volumes:
+  lf_pgdata:
+  n8n_n8n_data:
+    external: true           # created by automation-lab; reused here
